@@ -26,7 +26,7 @@ A macOS menu-bar app: hover over an English word → it OCRs the word under the 
 
 ## 安装
 
-1. 从 [Releases](../../releases) 下载 `HoverTranslator-macOS.zip` 并解压
+1. 从 [Releases](releases) 下载 `HoverTranslator-macOS.zip` 并解压
 2. 把 `HoverTranslator.app` 拖进「应用程序」
 3. **第一次打开要右键点图标 → 打开**（没有苹果开发者签名，之后双击即可）
 4. 按提示到 系统设置 → 隐私与安全性 → **屏幕与系统录音** 授权，然后退出重开应用
