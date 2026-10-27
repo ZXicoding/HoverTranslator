@@ -40,6 +40,8 @@ enum Cfg {
     static let panelH: CGFloat = 96
     static let panelHWithContext: CGFloat = 156
     static let panelAutoHide: TimeInterval = 3.6
+    static let awayHideDelay: TimeInterval = 1.0      // 光标移开后多久隐藏面板
+    static let awayDistance: CGFloat = 28             // 离开多远离算"移开"
     static let sameWordSpeakCooldown: TimeInterval = 1.2
     static let permissionRetryInterval: TimeInterval = 5.0
     static let maxPermissionRetries = 24              // 约 2 分钟
@@ -901,6 +903,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastWord = ""
     private var lastWordAt = Date.distantPast
     private var panelHideTask: DispatchWorkItem?
+    private var panelAnchor: CGPoint?        // 面板对应的"词"所在位置
+    private var panelHasContext = false
+    private var awayHideScheduled = false
     private var currentContext: String = ""
     private var rawZh: String = ""
     private var heartbeatTimer: Timer?
@@ -1138,13 +1143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         panel.orderFrontRegardless()
 
-        panelHideTask?.cancel()
-        let task = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { _ = self?.panel.orderOut(nil) }
-        }
-        panelHideTask = task
-        let hideAfter = visibleContext ? max(Cfg.panelAutoHide, 6.5) : Cfg.panelAutoHide
-        DispatchQueue.main.asyncAfter(deadline: .now() + hideAfter, execute: task)
+        panelAnchor = flippedGlobal
+        panelHasContext = visibleContext
+        awayHideScheduled = false
+        schedulePanelHide(after: visibleContext ? max(Cfg.panelAutoHide, 6.5) : Cfg.panelAutoHide)
     }
 
     // MARK: 心跳：读鼠标 + 静止检测 + 触发
@@ -1166,6 +1168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastMoveAt = Date()
             armed = true          // 移动过 -> 本次静止可以触发
         }
+        // 光标离开触发词 -> 1 秒后自动收起，别让面板挡在屏幕上
+        updatePanelVisibility(forCursor: loc)
         guard enabled, captureReady, !busy, armed else { return }
         guard Date().timeIntervalSince(lastMoveAt) >= Cfg.hoverDelay else { return }
         guard let info = ScreenGrabber.display(for: lastMouse, in: displays) else { return }
@@ -1235,7 +1239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self else { return }
                     let ctx = await self.enricher.explain(target) ?? fallback
                     guard let ctx, !ctx.isEmpty else { return }
-                    guard self.panel.isVisible, self.lastWord == snapWord else { return }
+                    guard self.panel.isVisible, self.lastWord == snapWord,
+                          self.cursorNear(cursor) else { return }
                     log("背景: \(target) -> \(String(ctx.prefix(30)))")
                     self.showPanel(at: cursor, word: shownWord, zh: zhText, context: ctx)
                 }
@@ -1246,6 +1251,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log("翻译网络失败: \(reason)")
             showPanel(at: cursor, word: w, zh: "网络不通，翻译失败（菜单栏「网络诊断」可检查）")
         }
+    }
+
+    /// 光标是否还停在触发位置附近
+    private func cursorNear(_ anchor: CGPoint, threshold: CGFloat = Cfg.awayDistance) -> Bool {
+        let dx = lastMouse.x - anchor.x
+        let dy = lastMouse.y - anchor.y
+        return dx * dx + dy * dy <= threshold * threshold
     }
 
     /// 是否值得补背景解释：词典释义里带「城市/首都/人名/公司…」等实体标记，
@@ -1266,6 +1278,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         return false
+    }
+
+    /// 统一的面板隐藏调度（取消上一次计时）
+    private func schedulePanelHide(after seconds: TimeInterval) {
+        panelHideTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.panel.orderOut(nil)
+                self.panelAnchor = nil
+                self.awayHideScheduled = false
+            }
+        }
+        panelHideTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: task)
+    }
+
+    /// 光标离开"触发的那个词"后，1 秒内收起面板；回到附近则恢复正常停留时间
+    private func updatePanelVisibility(forCursor loc: CGPoint) {
+        guard panel.isVisible, let anchor = panelAnchor else { return }
+        let dx = loc.x - anchor.x
+        let dy = loc.y - anchor.y
+        let isAway = dx * dx + dy * dy > Cfg.awayDistance * Cfg.awayDistance
+        if isAway {
+            guard !awayHideScheduled else { return }
+            awayHideScheduled = true
+            schedulePanelHide(after: Cfg.awayHideDelay)
+        } else if awayHideScheduled {
+            awayHideScheduled = false
+            schedulePanelHide(after: panelHasContext ? max(Cfg.panelAutoHide, 6.5) : Cfg.panelAutoHide)
+        }
     }
 
     // MARK: 朗读
@@ -1354,6 +1397,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             busy = false
             panelHideTask?.cancel()
+            panelAnchor = nil
+            awayHideScheduled = false
             panel.orderOut(nil)
             if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
         }

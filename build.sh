@@ -23,7 +23,7 @@ cd "$(dirname "$0")"
 
 APP_NAME="HoverTranslator"
 BUNDLE_ID="com.example.hovertranslator"
-VERSION="1.3"
+VERSION="1.4"
 SRC="main.swift"
 APP_DIR="$APP_NAME.app"
 BIN="$APP_DIR/Contents/MacOS/$APP_NAME"
