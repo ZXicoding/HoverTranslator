@@ -1,0 +1,13 @@
+# 构建产物
+.module-cache/
+dist/
+*.app/
+build/
+
+# 内部测试与验证材料
+verify/
+capture-test/
+evidence/
+
+# macOS
+.DS_Store
